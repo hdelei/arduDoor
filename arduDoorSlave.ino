@@ -1,7 +1,7 @@
 /* 
  *  Check if door is opened API
  * Using Arduino Uno + Ethernet shield Enc28J60
- * author: Vanderlei Mendes
+ * @author: Vanderlei Mendes
  * Project to solve a problem of my friend Gustavo (Só Portões)
  * 
  * This is the Server part wich returns JSON and it's intended to 
