@@ -1,14 +1,16 @@
 /* 
- *  Check if door is opened API
- * Using Arduino Uno + Ethernet shield Enc28J60
+ * TCP Sync Door
+ * Hardware: Arduino Uno + Ethernet shield Enc28J60
  * @author: Vanderlei Mendes
  * Project to solve a problem of my friend Gustavo (Só Portões)
  * 
  * This is the Server part wich returns JSON and it's intended to 
  * be used with another Arduino Uno + ENC28J60 as a client
  * 
- * When you send command to close door 1, it performs a check to see if the door 2 is closed
- * if the door i still opened, it will close the door 2 first and then closes the door 1  
+ * It checks the Slave Door. If it's in the same (opened/opened or closed/closed) condition 
+ * as the Master door, slave door is activated as the Master Door is,
+ * if i'ts in different condition (opened/closed or closed/opened), the command is performed only
+ * on the Master Door achieving the same condition 
  */
 
 #include <EtherCard.h>
@@ -18,24 +20,23 @@ static byte myip[] = {192, 168, 25, 16};
 byte Ethernet::buffer[700];
 
 const int ledPin = A4; //command status pin
-boolean ledStatus;
+boolean doorLedStatus = false;
 
-const int doorPin = A5; //
-int doorStatus;
+const int doorPin = A5; // sensor pin to check if door is opened/closed
+int doorSlaveStatus;
 
-//char* on = "closed";
-//char* off = "opened";
-char *doorStatusVerbose;
-char *commandVerbose;
+char *doorSlaveStatusVerbose;
+char *commandSlaveVerbose;
 
 const int doorCommand = A3; //command to activate the door
 boolean commandPending = false;
+
 
 void setup()
 {
 
   Serial.begin(57600);
-  Serial.println("Conditional Door Closing");
+  Serial.println("TCP Sync Door System ( Slave Unit )");
 
   if (!ether.begin(sizeof Ethernet::buffer, mymac, 10))
     Serial.println("Failed to access Ethernet controller");
@@ -49,7 +50,7 @@ void setup()
 
   pinMode(ledPin, OUTPUT); //door status led: on = door closed, off = door opened
   digitalWrite(ledPin, LOW);
-  ledStatus = false;
+  doorLedStatus = false;
 
   pinMode(doorPin, INPUT); //door sensor: HIGH = DOOR CLOSED, LOW = DOOR OPENED
 
@@ -60,9 +61,9 @@ void setup()
 void loop()
 {
 
-  doorStatus = digitalRead(doorPin); //read door condition
+  doorSlaveStatus = digitalRead(doorPin); //read door condition
 
-  if (doorStatus == LOW)
+  if (doorSlaveStatus == LOW)
   {
     digitalWrite(ledPin, LOW);
   }
@@ -76,56 +77,66 @@ void loop()
 
   if (pos)
   {
-
-    if (strstr((char *)Ethernet::buffer + pos, "GET /?door=activate") != 0)
+    //check if it's opened
+    if (strstr((char *)Ethernet::buffer + pos, "GET /?masterdoor=closing") != 0)
     {
-      Serial.println("---------- REQUEST STARTED ----------");
+      Serial.println("---------- REQUEST STARTED closing ----------");
       Serial.println();
-      if (doorStatus == LOW)
+      if (doorSlaveStatus == LOW)
       {
-        Serial.println("Door is opened. Performing closing command...");
-        ledStatus = true;
+        Serial.println("Master Door is closing. Performing closing command on opened Slave Door");
+        doorLedStatus = true;
       }
       else
       {
-        Serial.println("Door is already closed.");
+        Serial.println("Master Door is closing and Slave Door is already closed.");
         Serial.println();
         Serial.println("---------- REQUEST END ----------");
         Serial.println();
-        ledStatus = false;
+        doorLedStatus = false;
       }
     }
 
-    /*if(strstr((char *)Ethernet::buffer + pos, "GET /?status=released") != 0) {
-      Serial.println("Received RELEASED command");
-      ledStatus = false;
-    }*/
-
-    if (ledStatus)
+    //Check if it's closed
+    if (strstr((char *)Ethernet::buffer + pos, "GET /?masterdoor=opening") != 0)
     {
-      // digitalWrite(ledPin, HIGH);
-      doorStatusVerbose = "opened";
-      commandVerbose = "sent";
+      Serial.println("---------- REQUEST STARTED openning----------");
+      Serial.println();
+      if (doorSlaveStatus == HIGH)
+      {
+        Serial.println("Master Door is opening. Performing opening command on closed Slave Door");
+        doorLedStatus = true;
+      }
+      else
+      {
+        Serial.println("Master Door is opening and Slave Door is already opened.");
+        Serial.println();
+        Serial.println("---------- REQUEST END ----------");
+        Serial.println();
+        doorLedStatus = false;
+      }
+    }    
+
+    if (doorLedStatus)
+    {     
+      doorSlaveStatusVerbose = "same";
+      commandSlaveVerbose = "activating";      
       commandPending = true;
       Serial.println("Command sent.");
     }
     else
-    {
-      //digitalWrite(ledPin, LOW);
-      doorStatusVerbose = "closed";
-      commandVerbose = "idle";
+    {     
+      doorSlaveStatusVerbose = "different";
+      commandSlaveVerbose = "idle";      
+      Serial.println("command unnecessary.");
     }
 
     BufferFiller bfill = ether.tcpOffset();
     bfill.emit_p(PSTR("HTTP/1.0 200 OK\r\n"
                       "Content-Type: application/json\r\nPragma: no-cache\r\n\r\n"
-                      "{\"door\":\"$S\", \"command\":\"$S\"}"
-                      //"<html><head><title>WebLed</title></head>"
-                      //"<body>LED Status: $S "
-                      //"<a href=\"/?status=$S\"><input type=\"button\" value=\"$S\"></a>"
-                      //"</body></html>"
-                      ),
-                 doorStatusVerbose, commandVerbose, commandVerbose);
+                      "{\"slavedoor\":\"$S\", "
+                      "\"commandslavedoor\":\"$S\"}"),
+                      doorSlaveStatusVerbose, commandSlaveVerbose);
     ether.httpServerReply(bfill.position());
   }
 
